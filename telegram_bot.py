@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode 
 
-# تحميل متغيرات البيئة
+# 1. إعداد المتغيرات والتسجيل
 load_dotenv() 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -17,6 +17,32 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------
+# 💡 الابتكار الشراري: متابعة إعادة التوجيه (302)
+# ---------------------------------------------
+
+def get_final_url(url: str, headers: dict) -> str:
+    """
+    يتابع إعادة التوجيه 302 للحصول على الرابط النهائي النظيف للفيديو.
+    هذا يزيد من موثوقية الرابط عند إرساله إلى تليجرام.
+    """
+    try:
+        # استخدام requests.head لمتابعة إعادة التوجيه دون تحميل الملف بالكامل
+        response = requests.head(url, headers=headers, allow_redirects=True, timeout=15)
+        response.raise_for_status()
+        
+        # response.url هو الرابط النهائي بعد متابعة جميع الـ redirects
+        logger.info(f"Final URL found: {response.url}")
+        return response.url
+    except Exception as e:
+        logger.error(f"فشل متابعة إعادة التوجيه للرابط: {e}")
+        # نرجع الرابط الأصلي في حالة الفشل كخيار احتياطي
+        return url
+
+# ---------------------------------------------
+# --- وظائف البوت ---
+# ---------------------------------------------
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text('مرحباً! أنا جاهز لتحميل الفيديوهات. أرسل لي رابط فيديو من فيسبوك.')
@@ -29,7 +55,7 @@ async def handle_facebook_link(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text('الرجاء إرسال رابط صحيح لفيديو من فيسبوك.')
         return
 
-    wait_message = await update.message.reply_text('⏳ جارٍ تحليل الرابط بواسطة خدمة Railway... جاري تجاوز عقبات فيسبوك.')
+    wait_message = await update.message.reply_text('⏳ جارٍ تحليل الرابط وتطبيق الابتكار الشراري...')
 
     try:
         # 1. الاتصال بخدمة API الخلفية
@@ -50,19 +76,22 @@ async def handle_facebook_link(update: Update, context: ContextTypes.DEFAULT_TYP
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
             
+            # 2. تطبيق الابتكار الشراري
+            final_url = get_final_url(direct_url, tele_headers) 
+
             try:
-                # 2. الإرسال السحابي المتدفق مع رأسيات (لمزيد من القوة)
+                # 3. الإرسال السحابي المتدفق باستخدام الرابط النهائي
                 await update.message.reply_video(
-                    video=direct_url, 
+                    video=final_url, 
                     caption=f"✅ تم التحميل بنجاح: {title}",
                     duration=duration, 
                     supports_streaming=True,
-                    filename=f"{title}.{ext}", # لضمان الامتداد الصحيح
-                    read_timeout=90, # زيادة مهلة القراءة لتليجرام
-                    api_kwargs={'headers': tele_headers} # <--- الإضافة الجديدة
+                    filename=f"{title}.{ext}",
+                    read_timeout=120, 
+                    api_kwargs={'headers': tele_headers} # إرسال رأسيات مع طلب تليجرام
                 )
                 
-                # 3. حذف رسالة الانتظار
+                # 4. حذف رسالة الانتظار
                 await wait_message.delete()
                 
             except Exception as upload_e:
@@ -88,6 +117,7 @@ async def handle_facebook_link(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 def main() -> None:
+    """تشغيل البوت."""
     if not BOT_TOKEN or not API_URL:
         logger.error("🚫 لم يتم العثور على متغيرات البيئة BOT_TOKEN أو FACEBOOK_VIDEO_API_URL.")
         return
